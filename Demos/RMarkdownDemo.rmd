@@ -1,0 +1,145 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+```{css, echo = FALSE}
+caption {
+      color: red;
+      font-weight: bold;
+      font-size: 18px;
+      font-weight: bold;
+      text-align: center;
+    }
+```
+
+# Say Hello to markdown
+
+Markdown is an **easy to use** format for writing reports. It resembles what you naturally write every time you compose an email. In fact, you may have already used markdown *without realizing it*. These websites all rely on markdown formatting
+
+* [Github](www.github.com)
+* [StackOverflow](www.stackoverflow.com)
+* [Reddit](www.reddit.com)
+
+## Inline code
+
+To embed R code in a line of text, surround the code with a pair of backticks and the letter r, like this.
+
+Two plus two equals `r 2+2`.
+
+##Embed code
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+summary(cars)
+```
+
+## Embed plots
+
+You can also embed plots, for example:
+
+```{r, echo=FALSE}
+plot(cars)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+## Embed HTML Table
+
+```{r, echo=FALSE}
+
+library(kableExtra)
+
+coef_table <- data.frame(
+  Variables = c("var 1", "var 2", "var 3"),
+  Coefficients = c(1.6, 0.2, -2.0),
+  Conf.Lower = c(1.3, -0.4, -2.5),
+  Conf.Higher = c(1.9, 0.6, -1.4)
+) 
+
+indxs = which(coef_table$Conf.Lower < 0 & coef_table$Conf.Higher > 0)
+df <- data.frame(
+  coef_table[,1:2],
+  Interval = sprintf("(%.2f, %.2f)", coef_table$Conf.Lower, coef_table$Conf.Higher),
+  Visualization = ""
+)
+
+kable(df, booktabs = T, align = "c") %>%
+  kable_paper(full_width = FALSE) %>%
+    row_spec(indxs, bold = "T") %>%
+    column_spec(4, image = spec_pointrange(
+      x = coef_table$Coefficients, 
+      xmin = coef_table$Conf.Lower, 
+      xmax = coef_table$Conf.Higher, 
+      vline = 0) 
+      )
+```
+
+## Write Mathematical Equation
+
+This summation expression $\sum_{i=1}^n X_i$ appears inline.
+
+$$
+\begin{aligned}    Y &= \beta X \\    &=\beta_{1}MainEffects + \beta_{2}InteractionEffects + \epsilon \\    &= \beta_{11}Fit + \beta_{12}Fill + \beta_{13}Time + \beta_{21}Time*Fill +          \beta_{22}Fit*Fill + \epsilon \\ \\    where \space \hat{\beta} &= (X^{T}X)^{-1}X^{T}y \\    X &= \begin{bmatrix}            Fit & Fill & Time & Time*Fill & Fit*Fill \\             \space        \end{bmatrix}\end{aligned}
+$$
+
+## Conditional Format Kable Table
+
+```{r, echo = FALSE}
+library(formattable)
+ft_dt <- mtcars[1:5, 1:4]
+ft_dt$car <- row.names(ft_dt)
+row.names(ft_dt) <- NULL
+ft_dt$mpg <- color_tile("white", "red")(ft_dt$mpg)
+
+kable(ft_dt, escape = F) %>%
+  kable_paper(full_width = F) %>%
+  column_spec(5, width = "3cm") 
+```
+
+## Boxplot figure
+
+```{r, echo = FALSE}
+# Generate vector of data
+y <- rnorm(3000)
+outs <- c(-3, 3)  # outliers
+y <- c(y[y < 2.5 & y > -2.5], outs)
+q <- quantile(y, c(.25, .5, .75))  # quartiles
+mn <- q[1] - 1.5*IQR(y)
+mx <- q[3] + 1.5*IQR(y)
+
+boxplot(y, horizontal = TRUE, col = "lightblue", 
+                 axes = FALSE, outpch = 21, outbg = "red", 
+                 cex = 1.5, ylim = c(-4, 4))
+
+# Add outlier labels
+arrows(x0 = outs, y0 = c(1.25, 1.25), 
+       x1 = outs, y1 = c(1.05, 1.05),
+       length = 0.1, angle = 30, lwd = 2)
+text(x = outs, y = 1.3, labels = "Outliers")
+
+# Add plot labels
+text(x = c(mn, mx), y = 0.85, labels = c("Min", "Max"))
+text(x = c(mn, mx), y = .79, labels = c("Q1-1.5*IQR", "Q3+1.5*IQR"), 
+     col = "navy", cex = 0.8)
+text(x = q, y = 0.75, labels = c("Q1", "Median", "Q3"))
+text(x = q[2], y = c(1.3, 1.25), labels = c("Interquartile Range", "(IQR)"))
+```
+
+## Normal Probability Plot
+
+```{r, echo=FALSE}
+# normal probability plot
+y <- rnorm(3000)
+
+lwr <- qnorm(.005)
+upr <- qnorm(.995)
+clr <- ifelse(y > lwr & y < upr, "blue", "red")
+shp <- ifelse(y > lwr & y < upr, 1, 16)
+
+mplot <- qqnorm(y, xlab = "Normal Scores", col = clr, pch = shp, yaxt = "n") 
+abline(v = c(lwr, upr), lty = 5)
+text(x = c(lwr - 0.75, upr + 0.75), y = 0, 
+     labels = c("Lower\n0.5%\nOutliers", "Upper\n0.5%\nOutliers"))
+```
