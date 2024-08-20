@@ -18,49 +18,62 @@ def similarity(input_string, comparison_string):
     ratio = 1 - distance / max_distance
     return ratio
 
-def find_closest(input_group, comp_groups):
+def find_closest(plyr_str, comp_group):
     """Find the closest match to the input within a list of values"""
-    plyr_name, plyr_lname = input_group
-    best_match_lastname = None
-    best_match_any = None
-    max_similarity_lastname = -float('inf')
-    max_similarity_any = -float('inf')
+    best_match = None
+    max_similarity = -float('inf')
 
-    for fullname, lastname in comp_groups:
-        dist = similarity(plyr_name, fullname)
-        if plyr_lname == lastname:
-            if dist > max_similarity_lastname:
-                max_similarity_lastname = dist
-                best_match_lastname = fullname, lastname
-        elif dist > max_similarity_any:
-            max_similarity_any = dist
-            best_match_any = fullname, lastname
+    for candidate in comp_group:
+        dist = similarity(plyr_str, candidate)
+        if dist > max_similarity:
+            max_similarity = dist
+            best_match = candidate
 
-    if best_match_lastname is not None:
-        return best_match_lastname
-    return best_match_any
+    if best_match is not None:
+        return best_match
+    return plyr_str
 
-def fetch_pid(df, year):
+def fetch_pid(row):
     """Find players without team assignments"""
-    roster = nfl.import_seasonal_rosters([year])
-    roster = roster.set_index(['player_name', 'last_name'])
-    roster = roster.sort_index()
-    roster = roster[['team', 'player_id']]
+    global roster
 
-    result = []
-    key = ['Player', 'last_name', 'Pos', 'team']
-    for plyr, lname, pos, dfteam in df[key].values:
-        try:
-            team, pid = roster.loc[(plyr, lname)].values.tolist()[0]
-        except:
-            plyr_db = list(roster.index)
-            closest, lastname = find_closest((plyr, lname), plyr_db)
-            team, pid = roster.loc[closest, lastname].values.tolist()[0]
-        if dfteam == 'FA':
-            result.append({'Team': team, 'player_id': pid})
-        else:
-            result.append({'Team': dfteam, 'player_id': pid})
-    return pd.DataFrame(result)
+    plyr, pos, yr = row['Player'], row['Pos'], row['season']
+    key = tuple([plyr, pos, yr])
+
+    if pos == 'DST':
+        return f"{row['Team']}_DST"
+
+    if key in roster.index:
+        df = roster.loc[key]
+    elif key not in roster.index:
+        cross_sect = roster.xs(yr, level='season', drop_level=False)
+        csindex = cross_sect.index
+        pnames_list = list(csindex.get_level_values('player_name').unique())
+
+        pname = find_closest(row['Player'], pnames_list)
+        df = cross_sect.loc[(pname)]
+
+    if len(df) == 1:
+        return df['player_id'].values[0]
+    elif len(df) > 1:  # players with the same name
+        distances = (df['total_yards'] - row['TYDS']) ** 2
+        return df.loc[distances.idxmin(), 'player_id']
+
+def fetch_team(row):
+    global roster_pid
+    team_aliases = {'LAR':['LAR', 'SL', 'LA'], 'HOU':['HOU', 'HST']
+            , 'BAL':['BAL', 'BLT'], 'CLE':['CLE', 'CLV'], 'ARI':['ARI', 'ARZ']
+            , 'JAC':['JAC', 'JAX'], 'LV':['LV', 'OAK'], 'LAC':['LAC', 'SD']
+            }
+    tmap = {itm: key for key, vals in team_aliases.items() for itm in vals}
+
+    if row['player_id'] in roster_pid.index:
+        rdf = roster_pid.loc[(row['player_id'], row['season'])]
+        team = rdf['team'].values[0]
+        if team in tmap:
+            return tmap[team]
+        return team
+    return row['Team']
 
 def fix_colnames(df, pos):
     if re.search(r'WR|TE', pos):
@@ -84,32 +97,40 @@ def fix_colnames(df, pos):
         df['TTDS'] = df['PTD'] + df['RTD']
     elif re.search('K', pos):
         df['ATT'] = df['FGA'] + df['XPA']
+        df['TYDS'] = 0
     elif re.search('DST', pos):
         df['TTDS'] = df['DEF TD'] + df['SPC TD']
+        df['TYDS'] = 0
     return df
 
-def parse_team(df):
+def parse_player(plyr_str):
     """Parse the team assignments from player name field"""
-    pattern = r'([\w\'-.]+)\s*([\w\'-.]+)\s*([\w.]+)*\s*\((\w+)\)'
-    results = []
-    for player in df['Player'].values:
-        pname, team = player, 'FA'
-        match = re.search(pattern, player)
-        if match:
-            fname, lname, suffix, team = match.groups()
-            if suffix is not None:
-                pname = f'{fname} {lname} {suffix}'
-                last_name = f'{lname} {suffix}'
-            else:
-                pname = f'{fname} {lname}'
-                last_name = f'{lname}'
-
-        info = {'Player': pname, 'Team': team, 'last_name': last_name}
-        results.append(info)
-    return pd.DataFrame(results)
+    pattern = re.compile(r'([\w\'-.]+)\s*([\w\'-.]+)\s*([\w.]+)*\s*\((\w+)\)')
+    match = pattern.search(plyr_str)
+    pname, team = plyr_str, None
+    if match:
+        nmparts = match.groups()
+        pname, team = ' '.join(filter(None, nmparts[:3])), nmparts[3]
+    return pname, team
 
 module_dir = os.path.dirname(os.path.abspath(__file__))
 filename = 'FantasyPros_Fantasy_Football_Statistics'
+
+roster = nfl.import_seasonal_rosters(range(2002, 2024))
+stats = nfl.import_seasonal_data(range(2002, 2024))
+roster = pd.merge(roster, stats, on=['player_id', 'season'], how='left')
+
+roster['rushing_yards'] = roster['rushing_yards'].fillna(0)
+roster['passing_yards'] = roster['passing_yards'].fillna(0)
+roster['total_yards'] = roster['rushing_yards'] + roster['passing_yards']
+
+idx = ['player_name', 'position', 'season', 'team']
+roster = roster.set_index(idx).sort_index()  # Ensure index is sorted
+roster = roster.loc[~roster.index.duplicated(keep='first')]  # drop duplicates
+roster = roster[['player_id', 'total_yards']]
+
+roster_pid = roster.reset_index()
+roster_pid = roster_pid.set_index(['player_id', 'season']).sort_index()
 
 data = pd.DataFrame()
 for year_dir in os.listdir(module_dir):
@@ -120,19 +141,23 @@ for year_dir in os.listdir(module_dir):
             adf = pd.read_csv(data_file)
             pos = re.search(r'_([A-Z]+).csv', str(data_file)).group(1)
             adf['Pos'] = pos
-            adf['Season'] = year_dir
+            adf['season'] = int(year_dir)
             adf = adf.dropna(subset=['Player'])  # remove blanks
             adf = fix_colnames(adf, pos)
-            adf[['Player', 'team', 'last_name']] = parse_team(adf)
-            adf[['team', 'player_id']] = fetch_pid(adf, int(year_dir))
+
+            plyrteam_tuples = adf['Player'].apply(parse_player)
+            adf[['Player', 'Team']] = plyrteam_tuples.apply(pd.Series)
+
+            adf['player_id'] = adf.apply(fetch_pid, axis=1)
+            adf['Team'] = adf.apply(fetch_team, axis=1)
             data = pd.concat([data, adf], axis=0).reset_index(drop=True)
-cols = ['Season', 'Pos', 'Player', 'last_name'
-        , 'player_id'
-        , 'team', 'ATT'
+cols = ['season', 'Pos', 'Player', 'player_id', 'Team', 'ATT'
         , 'PYDS', 'RYDS', 'TYDS', 'TTDS', 'FPTS']
 data = data[cols]
+numerics = data.select_dtypes(include='number')
+data[numerics.columns] = numerics.fillna(0)
 
 # data = data.sort_values(['Player', 'Season', 'Team'])
 # data[['Actual_FPTS', 'Actual_G']] = data[['FPTS', 'G']].shift(-1)
 
-data.to_csv('player_db.csv')
+data.to_csv('player_db.csv', index=False)
